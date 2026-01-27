@@ -45,6 +45,7 @@
 		"cheerio": "^1.1.2",
 		"dexie": "^4.2.1",
 		"konsta": "^5.0.6",
-		"svelte-chartjs": "^3.1.5"
+		"svelte-chartjs": "^3.1.5",
+		"uuid": "^13.0.0"
 	}
 }
