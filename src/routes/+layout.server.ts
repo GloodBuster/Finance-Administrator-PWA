@@ -1,11 +1,11 @@
 // src/routes/+page.server.ts
 import * as cheerio from 'cheerio';
-import type { PageServerLoad } from './$types';
+import type { LayoutServerLoad } from './$types';
 
 // Evitar rechazo por certificados del BCV
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-export const load: PageServerLoad = async () => {
+export const load: LayoutServerLoad = async () => {
     try {
         const response = await fetch('https://www.bcv.org.ve/', {
             headers: {
