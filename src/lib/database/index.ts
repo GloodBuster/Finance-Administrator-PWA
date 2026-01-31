@@ -19,7 +19,7 @@ export class ExpensesAppDB extends Dexie {
 
             incomes: 'id, date',
 
-            categories: 'id, isSavings, name',
+            categories: 'id, isSavings, name, isArchived',
 
             monthlyBudgets: 'id, [year+month], categoryId',
 

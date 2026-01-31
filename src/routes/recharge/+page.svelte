@@ -10,12 +10,47 @@
 	let { data } = $props();
 
 	// Estado
-	let mode = $state('ves');
+	let mode = $state('ves'); // 'ves' | 'usd'
 	let loading = $state(false);
 	let amount = $state('');
 	let description = $state('');
 	let exchangeRate = $state(untrack(() => data.tasa?.toString() || ''));
 
+	// Estado del Saldo Real
+	let availableUsd = $state(0);
+	let checkingBalance = $state(true);
+
+	// Al montar el componente, calculamos cuánto dinero real tienes
+	$effect(() => {
+		calculateAvailableUsd();
+	});
+
+	async function calculateAvailableUsd() {
+		checkingBalance = true;
+		try {
+			// 1. Sumar todos los ingresos en USD
+			const incomes = await db.incomes.toArray();
+			const totalIncome = incomes.reduce((sum, inc) => sum + inc.amountUsd, 0);
+
+			// 2. Restar los gastos hechos DIRECTAMENTE en USD
+			const expenses = await db.expenses.where('originalCurrency').equals('USD').toArray();
+			const totalSpentDirectly = expenses.reduce((sum, exp) => sum + exp.amountVes, 0); // Ojo: en gastos USD amountVes guarda el valor si no hay conversión, pero mejor usar realUsdCost para asegurar
+			// CORRECCIÓN PEQUEÑA: En el paso anterior definimos que si es USD, realUsdCost tiene el valor.
+			const totalSpentDirectlyCorrected = expenses.reduce((sum, exp) => sum + exp.realUsdCost, 0);
+
+			// 3. Restar los dólares que ya "vendiste" para comprar Lotes de Bolívares
+			const batches = await db.batches.toArray();
+			const totalSpentOnBatches = batches.reduce((sum, batch) => sum + batch.initialUsd, 0);
+
+			availableUsd = totalIncome - totalSpentDirectlyCorrected - totalSpentOnBatches;
+		} catch (e) {
+			console.error('Error calculando saldo:', e);
+		} finally {
+			checkingBalance = false;
+		}
+	}
+
+	// Cálculo reactivo
 	let calculatedUsdCost = $derived.by(() => {
 		const m = parseFloat(amount);
 		const r = parseFloat(exchangeRate);
@@ -24,14 +59,8 @@
 	});
 
 	async function handleSave() {
-		// 👇 2. VALIDACIÓN VISUAL
 		if (!amount || parseFloat(amount) <= 0) {
 			toast.show('Por favor ingresa un monto válido', 'error');
-			return;
-		}
-
-		if (mode === 'ves' && (!exchangeRate || parseFloat(exchangeRate) <= 0)) {
-			toast.show('La tasa de cambio es obligatoria', 'error');
 			return;
 		}
 
@@ -42,16 +71,40 @@
 
 			if (mode === 'ves') {
 				const valRate = parseFloat(exchangeRate);
+				if (!valRate || valRate <= 0) {
+					toast.show('La tasa de cambio es obligatoria', 'error');
+					loading = false;
+					return;
+				}
+
+				// --- 🛡️ VALIDACIÓN DE FONDOS (NUEVO) ---
+				const costInUsd = parseFloat(calculatedUsdCost);
+
+				// Refrescamos el saldo al momento de guardar por seguridad
+				await calculateAvailableUsd();
+
+				// Margen de error pequeño por redondeo (0.01)
+				if (costInUsd > availableUsd + 0.01) {
+					toast.show(
+						`Fondos insuficientes. Tienes $${availableUsd.toFixed(2)} y necesitas $${costInUsd}`,
+						'error'
+					);
+					loading = false;
+					return;
+				}
+				// ----------------------------------------
+
 				await db.batches.add({
 					id: uuidv4(),
 					createdAt: new Date(),
 					exchangeRate: valRate,
 					initialVes: valAmount,
 					currentVes: valAmount,
-					initialUsd: parseFloat(calculatedUsdCost),
+					initialUsd: costInUsd,
 					isGift: false
 				});
 			} else {
+				// Si es ingreso, no validamos fondos, ¡estamos metiendo dinero!
 				await db.incomes.add({
 					id: uuidv4(),
 					date: new Date(),
@@ -60,11 +113,7 @@
 				});
 			}
 
-			// 👇 3. FEEDBACK DE ÉXITO Y DELAY
 			toast.show('¡Dinero registrado correctamente!', 'success');
-
-			// Esperamos un poquito (700ms) para que el usuario lea el mensaje
-			// antes de cambiar de página bruscamente.
 			setTimeout(async () => {
 				await goto('/');
 			}, 700);
@@ -123,6 +172,16 @@
 						<div class="border-b border-zinc-100 py-6 text-center dark:border-zinc-800">
 							<span class="text-4xl">🇻🇪</span>
 							<p class="mt-2 text-xs text-zinc-400">Crear nuevo lote de inventario</p>
+						</div>
+						<div class="mt-2 flex items-center justify-center gap-2">
+							<span
+								class="rounded-full bg-zinc-100 px-2 py-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
+							>
+								Disponible para cambiar:
+								<strong class={availableUsd < 0 ? 'text-red-500' : 'text-emerald-600'}>
+									${availableUsd.toFixed(2)}
+								</strong>
+							</span>
 						</div>
 
 						<List inset class="m-0 p-4">
