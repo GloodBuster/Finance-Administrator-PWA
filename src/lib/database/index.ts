@@ -15,7 +15,7 @@ export class ExpensesAppDB extends Dexie {
 
             batches: 'id, createdAt, currentVes',
 
-            expenses: 'id, date, categoryId',
+            expenses: 'id, date, categoryId, originalCurrency',
 
             incomes: 'id, date',
 
@@ -23,7 +23,7 @@ export class ExpensesAppDB extends Dexie {
 
             monthlyBudgets: 'id, [year+month], categoryId',
 
-            transfers: 'id, date'
+            transfers: 'id, date, fromCategoryId, toCategoryId'
         });
     }
 }

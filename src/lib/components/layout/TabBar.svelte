@@ -33,9 +33,9 @@
 		</TabbarLink>
 
 		<TabbarLink
-			active={activeUrl.startsWith('/batchs')}
+			active={activeUrl.startsWith('/batches')}
 			label="Lotes"
-			linkProps={{ href: '/batchs' }}
+			linkProps={{ href: '/batches' }}
 			class={tabbarLinkStyles}
 		>
 			{#snippet icon()}
