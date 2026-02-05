@@ -9,14 +9,31 @@
 	let { data } = $props();
 	let isPlannerOpen = $state(false);
 
-	// 1. Saldo Total Global (Dinero físico/digital total)
-	let totalVes = liveQuery(async () => {
+	// 1. CÁLCULO DE SALDOS REALES (POR LOTE)
+	// En vez de dividir el total entre la tasa actual, sumamos el valor real de cada lote.
+	let balanceData = liveQuery(async () => {
 		const batches = await db.batches.where('currentVes').above(0).toArray();
-		return batches.reduce((total, batch) => total + batch.currentVes, 0);
-	});
-	let totalUsdt = $derived((($totalVes ?? 0) / data.tasa).toFixed(2));
 
-	// 2. Consulta Maestra: Categorías + Saldos + Presupuestos
+		let totalVes = 0;
+		let totalUsdValuation = 0;
+
+		batches.forEach((batch) => {
+			totalVes += batch.currentVes;
+
+			// Calculamos cuánto valen estos Bs según la tasa a la que se compraron
+			// Protección: Si la tasa es 0 o null, evitamos dividir por cero
+			const rate = batch.exchangeRate && batch.exchangeRate > 0 ? batch.exchangeRate : 1;
+
+			totalUsdValuation += batch.currentVes / rate;
+		});
+
+		return {
+			ves: totalVes,
+			usd: totalUsdValuation
+		};
+	});
+
+	// 2. Consulta Maestra (Categorías + Presupuestos)
 	let categoriesWithData = liveQuery(async () => {
 		const cats = await db.categories.filter((c) => !c.isArchived).toArray();
 
@@ -28,40 +45,36 @@
 		const startOfMonth = new Date(currentYear, currentMonth, 1);
 		const endOfMonth = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59);
 
-		// Traemos TODO lo necesario (Dexie es rápido, no te preocupes)
+		// Traemos gastos y transferencias
 		const allExpenses = await db.expenses.toArray();
 		const allTransfers = await db.transfers.toArray();
 
-		// Presupuestos/Metas de ESTE mes
+		// Presupuestos de ESTE mes
 		const budgets = await db.monthlyBudgets
 			.where('[year+month]')
 			.equals([currentYear, currentMonth])
 			.toArray();
 
 		return cats.map((cat) => {
-			// A. LÓGICA DE PRESUPUESTO (Mes Actual)
 			const budgetObj = budgets.find((b) => b.categoryId === cat.id);
 			const budgetAmount = budgetObj ? budgetObj.amountUsd : 0;
 
-			// B. CÁLCULOS SEGÚN TIPO
-			let displayAmount = 0; // Lo que se muestra grande
-			let progress = 0; // Para la barra
-			let label = ''; // Texto descriptivo ("Gastado" o "Disponible")
+			let displayAmount = 0;
+			let progress = 0;
+			let label = '';
+			let spentThisMonth = 0;
+			let remainingBudget = 0;
 
 			if (cat.isSavings) {
 				// --- MODO AHORRO (STOCK) ---
-				// 1. Calcular Saldo Histórico (Disponible Real)
-				// Entradas (Transferencias hacia aquí)
 				const totalIn = allTransfers
 					.filter((t) => t.toCategoryId === cat.id)
 					.reduce((sum, t) => sum + t.amountUsd, 0);
 
-				// Salidas (Transferencias desde aquí hacia otro lado)
 				const totalOut = allTransfers
 					.filter((t) => t.fromCategoryId === cat.id)
 					.reduce((sum, t) => sum + t.amountUsd, 0);
 
-				// Gastos (Dinero que salió de esta categoría)
 				const totalSpent = allExpenses
 					.filter((e) => e.categoryId === cat.id)
 					.reduce((sum, e) => sum + e.realUsdCost, 0);
@@ -70,36 +83,39 @@
 				displayAmount = availableBalance;
 				label = 'Disponible';
 
-				// 2. Calcular Progreso de la Meta del Mes (Aporte mensual)
-				// ¿Cuánto he transferido a esta cuenta ESTE mes?
+				// Gastos de este mes
+				spentThisMonth = allExpenses
+					.filter((e) => e.categoryId === cat.id && e.date >= startOfMonth && e.date <= endOfMonth)
+					.reduce((sum, e) => sum + e.realUsdCost, 0);
+
+				// Progreso de Aporte
 				const contributionsThisMonth = allTransfers
 					.filter(
 						(t) => t.toCategoryId === cat.id && t.date >= startOfMonth && t.date <= endOfMonth
 					)
 					.reduce((sum, t) => sum + t.amountUsd, 0);
 
-				// La barra muestra cuánto he aportado vs la meta
 				progress = budgetAmount > 0 ? (contributionsThisMonth / budgetAmount) * 100 : 0;
 			} else {
 				// --- MODO GASTO (FLUJO) ---
-				// Gastos de este mes
-				const spentThisMonth = allExpenses
+				spentThisMonth = allExpenses
 					.filter((e) => e.categoryId === cat.id && e.date >= startOfMonth && e.date <= endOfMonth)
 					.reduce((sum, e) => sum + e.realUsdCost, 0);
 
 				displayAmount = spentThisMonth;
+				remainingBudget = budgetAmount - spentThisMonth;
 				label = 'Gastado';
-
-				// La barra muestra gasto vs tope
 				progress = budgetAmount > 0 ? (spentThisMonth / budgetAmount) * 100 : 0;
 			}
 
 			return {
 				...cat,
-				displayAmount, // Puede ser "Gastado este mes" o "Saldo total" según el tipo
+				displayAmount,
 				budget: budgetAmount,
 				progress,
-				label
+				label,
+				spentThisMonth,
+				remainingBudget
 			};
 		});
 	});
@@ -135,13 +151,15 @@
 			<div class="relative z-10">
 				<p class="text-sm font-medium text-blue-100/80">Saldo Disponible (Bs)</p>
 				<h2 class="mt-2 text-4xl font-black tracking-tight">
-					Bs. {$totalVes?.toLocaleString('es-VE', { maximumFractionDigits: 2 }) ?? '0,00'}
+					Bs. {$balanceData?.ves.toLocaleString('es-VE', { maximumFractionDigits: 2 }) ?? '0,00'}
 				</h2>
 				<div class="mt-4 flex items-center gap-3">
 					<div
 						class="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3 py-1 backdrop-blur-md"
 					>
-						<span class="text-xs font-medium text-blue-50">≈ $ {totalUsdt} USDT</span>
+						<span class="text-xs font-medium text-blue-50">
+							≈ $ {$balanceData?.usd.toFixed(2) ?? '0.00'} Valor Real
+						</span>
 					</div>
 				</div>
 			</div>
@@ -212,12 +230,36 @@
 							</div>
 
 							<div class="mt-3 pl-2">
-								<div class="mb-1 flex items-end justify-between">
+								<div class="mb-1 flex flex-col justify-end">
 									<h3 class="text-sm leading-tight font-medium text-zinc-900 dark:text-white">
 										{cat.name}
 									</h3>
-									{#if cat.isSavings && cat.budget > 0}
-										<span class="text-[9px] text-zinc-400">Meta: ${cat.budget}</span>
+
+									{#if cat.isSavings}
+										<div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+											{#if cat.budget > 0}
+												<span class="text-[9px] font-medium text-zinc-400">Meta: ${cat.budget}</span
+												>
+											{/if}
+											{#if cat.spentThisMonth > 0}
+												<span class="text-[9px] font-bold text-red-500"
+													>Gastado: -${cat.spentThisMonth.toFixed(0)}</span
+												>
+											{/if}
+										</div>
+									{:else if cat.budget > 0}
+										<div class="mt-0.5">
+											{#if cat.remainingBudget >= 0}
+												<span class="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
+													Restan: ${cat.remainingBudget.toFixed(0)}
+												</span>
+											{:else}
+												<span class="text-[9px] font-bold text-red-500">
+													Excedido: ${Math.abs(cat.remainingBudget).toFixed(0)}
+												</span>
+											{/if}
+											<span class="ml-1 text-[8px] text-zinc-400">(de ${cat.budget})</span>
+										</div>
 									{/if}
 								</div>
 
@@ -239,9 +281,7 @@
 										<p class="mt-1 text-[9px] font-bold text-red-500">¡Excedido!</p>
 									{/if}
 									{#if cat.isSavings && cat.progress >= 100}
-										<p class="mt-1 text-[9px] font-bold text-emerald-600">
-											¡Meta del mes cumplida! 🎉
-										</p>
+										<p class="mt-1 text-[9px] font-bold text-emerald-600">¡Meta cumplida! 🎉</p>
 									{/if}
 								{:else}
 									<p class="text-[10px] text-zinc-500">

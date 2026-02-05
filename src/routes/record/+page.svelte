@@ -7,13 +7,16 @@
 	import { fade } from 'svelte/transition';
 
 	// --- 1. DEFINICIÓN DE TIPO UNIFICADO ---
+
+	type OriginalCurrency = 'VES' | 'USD';
 	interface Movement {
 		id: string;
 		type: 'expense' | 'income' | 'batch' | 'transfer';
 		date: Date;
 		desc: string;
-		amount: number;
-		currency: string;
+		amount: number; // SIEMPRE EN USD para visualización principal
+		originalAmount?: number; // Monto en moneda original (si fue VES)
+		originalCurrency: OriginalCurrency;
 		category?: string | null;
 		rate?: number;
 		transferFrom?: string;
@@ -23,27 +26,20 @@
 
 	// --- ESTADO ---
 	let viewDate = $state(new Date());
-	let movements = $state<Movement[]>([]); // Estado simple, lo llenaremos con el efecto
+	let movements = $state<Movement[]>([]);
 	let loading = $state(true);
 
-	// --- AYUDAS DE FECHA (UTC STRICT) ---
-	// Usamos UTC porque los inputs de fecha guardan en UTC 00:00.
-	// Esto evita que el 1 de Febrero se vea como 31 de Enero por la zona horaria.
+	// --- AYUDAS DE FECHA ---
 	function getMonthRange(date: Date) {
 		const year = date.getFullYear();
 		const month = date.getMonth();
-
-		// Inicio: Día 1 del mes a las 00:00:00 UTC
+		// Rango UTC estricto
 		const start = new Date(Date.UTC(year, month, 1, 0, 0, 0));
-		// Fin: Último milisegundo del mes UTC
 		const end = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
-
 		return { start, end };
 	}
 
 	function changeMonth(delta: number) {
-		// Al cambiar la fecha, actualizamos el estado viewDate.
-		// El $effect detectará esto automáticamente.
 		viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + delta, 1);
 	}
 
@@ -55,34 +51,33 @@
 		return map;
 	});
 
-	// --- EFECTO DE CONSULTA (REACTIVIDAD TOTAL) ---
+	// --- CONSULTA ---
 	$effect(() => {
-		// 1. Recalculamos rango basado en la fecha actual (viewDate)
 		const { start, end } = getMonthRange(viewDate);
 		loading = true;
 
-		// 2. Creamos la suscripción a Dexie
 		const subscription = liveQuery(async () => {
 			const allExpenses = await db.expenses.toArray();
 			const allIncomes = await db.incomes.toArray();
 			const allBatches = await db.batches.toArray();
 			const allTransfers = await db.transfers.toArray();
 
-			// Filtramos usando el rango UTC estricto
+			// Filtros
 			const expenses = allExpenses.filter((e) => e.date >= start && e.date <= end);
 			const incomes = allIncomes.filter((i) => i.date >= start && i.date <= end);
 			const batches = allBatches.filter((b) => b.createdAt >= start && b.createdAt <= end);
 			const transfers = allTransfers.filter((t) => t.date >= start && t.date <= end);
 
-			// Unificamos
+			// Unificación
 			const mixed: Movement[] = [
 				...expenses.map((e) => ({
 					id: e.id,
 					type: 'expense' as const,
 					date: e.date,
 					desc: e.description || 'Sin descripción',
-					amount: e.originalCurrency === 'VES' ? e.amountVes : e.realUsdCost,
-					currency: e.originalCurrency,
+					amount: e.realUsdCost,
+					originalAmount: e.amountVes,
+					originalCurrency: e.originalCurrency as OriginalCurrency,
 					category: e.categoryId,
 					rawObj: e
 				})),
@@ -92,7 +87,7 @@
 					date: i.date,
 					desc: i.description || 'Ingreso',
 					amount: i.amountUsd,
-					currency: 'USD',
+					originalCurrency: 'USD' as OriginalCurrency,
 					category: null,
 					rawObj: i
 				})),
@@ -101,26 +96,22 @@
 					type: 'batch' as const,
 					date: b.createdAt,
 					desc: 'Recarga de Bs',
-					amount: b.initialVes,
-					currency: 'VES',
+					amount: b.initialUsd,
+					originalAmount: b.initialVes,
+					originalCurrency: 'VES' as OriginalCurrency,
 					rate: b.exchangeRate,
 					category: null,
 					rawObj: b
 				})),
 				...transfers.map((t) => {
-					// Pequeño ajuste visual solo para la hora mostrada si es medianoche exacta
-					// (Opcional, pero ayuda a que no diga "8:00 PM del día anterior" en la lista)
 					const visualDate = new Date(t.date);
-					// Si es exactamente 00:00 UTC (INPUT), en VET es 20:00.
-					// Si quieres que se vea como el día correcto en la lista, podrías sumar horas visualmente,
-					// pero para ordenamiento usamos la fecha real.
 					return {
 						id: t.id,
 						type: 'transfer' as const,
 						date: visualDate,
 						desc: t.note || 'Transferencia',
 						amount: t.amountUsd,
-						currency: 'USD',
+						originalCurrency: 'USD' as OriginalCurrency,
 						transferFrom: t.fromCategoryId,
 						transferTo: t.toCategoryId,
 						rawObj: t
@@ -130,12 +121,10 @@
 
 			return mixed.sort((a, b) => b.date.getTime() - a.date.getTime());
 		}).subscribe((data) => {
-			// 3. Actualizamos el estado local
 			movements = data;
 			loading = false;
 		});
 
-		// Cleanup: Dexie deja de escuchar cuando el componente se desmonta o cambia la fecha
 		return () => subscription.unsubscribe();
 	});
 
@@ -145,7 +134,6 @@
 		let currentGroup: (typeof groups)[0] | null = null;
 
 		movements.forEach((move) => {
-			// Para el título, usamos formato local amigable
 			const dateStr = move.date.toLocaleDateString('es-VE', {
 				weekday: 'long',
 				day: 'numeric',
@@ -158,11 +146,10 @@
 			}
 			currentGroup.items.push(move);
 		});
-
 		return groups;
 	});
 
-	// --- ACCIONES ---
+	// --- BORRAR ---
 	async function handleDelete(move: Movement) {
 		if (!confirm('¿Eliminar este registro? Esta acción afectará tus saldos.')) return;
 		try {
@@ -229,7 +216,7 @@
 							<div
 								class="group relative flex items-center justify-between p-4 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
 							>
-								<div class="flex items-center gap-4 overflow-hidden">
+								<div class="flex min-w-0 flex-1 items-center gap-4 overflow-hidden">
 									<div
 										class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg
                                         {move.type === 'expense'
@@ -250,37 +237,47 @@
 												<span style="color: {$categoriesMap.get(move.category).color}">
 													{getCategoryIcon($categoriesMap.get(move.category).icon)}
 												</span>
-											{:else}
-												💸
-											{/if}
+											{:else}💸{/if}
 										{/if}
 										{#if move.type === 'income'}💰{/if}
 										{#if move.type === 'batch'}🔄{/if}
 										{#if move.type === 'transfer'}⇄{/if}
 									</div>
 
-									<div class="min-w-0">
+									<div class="min-w-0 flex-1">
 										<p class="truncate text-sm font-bold text-zinc-900 dark:text-white">
 											{move.desc}
 										</p>
-										<p class="flex items-center gap-1 truncate text-xs text-zinc-500">
-											{move.date.toLocaleTimeString('es-VE', {
-												hour: '2-digit',
-												minute: '2-digit'
-											})}
 
-											{#if move.type === 'batch'}
-												• Tasa: {move.rate}
+										<div class="mt-0.5 flex flex-col items-start gap-0.5 text-xs text-zinc-500">
+											{#if move.type === 'expense' && $categoriesMap && move.category}
+												<span class="w-full truncate font-medium text-zinc-600 dark:text-zinc-400">
+													{$categoriesMap.get(move.category)?.name}
+												</span>
+												{#if move.originalCurrency === 'VES'}
+													<span class="text-[11px] opacity-80">
+														Bs. {move.originalAmount?.toLocaleString('es-VE')}
+													</span>
+												{/if}
 											{/if}
 
-											{#if move.type === 'expense' && $categoriesMap && move.category}
-												• {$categoriesMap.get(move.category)?.name}
+											{#if move.type === 'batch'}
+												<span>Tasa: {move.rate}</span>
+												<span class="text-[11px] opacity-80">
+													Bs. {move.originalAmount?.toLocaleString('es-VE')}
+												</span>
 											{/if}
 
 											{#if move.type === 'transfer' && $categoriesMap && move.transferFrom && move.transferTo}
-												<span class="flex items-center gap-1">
-													• {$categoriesMap.get(move.transferFrom)?.name}
-													<svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+												<span
+													class="flex w-full items-center gap-1 truncate text-purple-600/80 dark:text-purple-400/80"
+												>
+													{$categoriesMap.get(move.transferFrom)?.name}
+													<svg
+														class="h-3 w-3 shrink-0"
+														fill="none"
+														stroke="currentColor"
+														viewBox="0 0 24 24"
 														><path
 															stroke-linecap="round"
 															stroke-linejoin="round"
@@ -291,7 +288,11 @@
 													{$categoriesMap.get(move.transferTo)?.name}
 												</span>
 											{/if}
-										</p>
+
+											{#if move.type === 'income'}
+												<span>Ingreso directo</span>
+											{/if}
+										</div>
 									</div>
 								</div>
 
@@ -312,8 +313,7 @@
 											: ''}"
 									>
 										{move.type === 'expense' ? '-' : move.type === 'income' ? '+' : '•'}
-										{move.currency === 'VES' ? 'Bs' : '$'}
-										{move.amount.toLocaleString('es-VE', {
+										$ {move.amount.toLocaleString('en-US', {
 											minimumFractionDigits: 2,
 											maximumFractionDigits: 2
 										})}
@@ -322,7 +322,7 @@
 									<button
 										class="rounded-lg p-1.5 text-zinc-300 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
 										onclick={() => handleDelete(move)}
-										aria-label="Eliminar registro"
+										aria-label="Eliminar movimiento"
 									>
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
 											><path
