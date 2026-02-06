@@ -5,51 +5,36 @@
 	import { getCategoryIcon } from '$lib/utils';
 	import BottomNav from '$lib/components/layout/TabBar.svelte';
 	import MonthlyPlanner from '$lib/components/budget/MonthlyPlanner.svelte';
+	import ToolsSheet from '$lib/components/tools/ToolsSheet.svelte'; // 👈 1. IMPORTAR
 
 	let { data } = $props();
 	let isPlannerOpen = $state(false);
+	let isToolsOpen = $state(false); // 👈 2. NUEVO ESTADO
 
 	// 1. CÁLCULO DE SALDOS REALES (POR LOTE)
-	// En vez de dividir el total entre la tasa actual, sumamos el valor real de cada lote.
 	let balanceData = liveQuery(async () => {
 		const batches = await db.batches.where('currentVes').above(0).toArray();
-
 		let totalVes = 0;
 		let totalUsdValuation = 0;
-
 		batches.forEach((batch) => {
 			totalVes += batch.currentVes;
-
-			// Calculamos cuánto valen estos Bs según la tasa a la que se compraron
-			// Protección: Si la tasa es 0 o null, evitamos dividir por cero
 			const rate = batch.exchangeRate && batch.exchangeRate > 0 ? batch.exchangeRate : 1;
-
 			totalUsdValuation += batch.currentVes / rate;
 		});
-
-		return {
-			ves: totalVes,
-			usd: totalUsdValuation
-		};
+		return { ves: totalVes, usd: totalUsdValuation };
 	});
 
-	// 2. Consulta Maestra (Categorías + Presupuestos)
+	// 2. Consulta Maestra (Categorías...)
 	let categoriesWithData = liveQuery(async () => {
 		const cats = await db.categories.filter((c) => !c.isArchived).toArray();
-
 		const now = new Date();
 		const currentYear = now.getFullYear();
 		const currentMonth = now.getMonth();
-
-		// Rangos de fecha (Mes actual)
 		const startOfMonth = new Date(currentYear, currentMonth, 1);
 		const endOfMonth = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59);
 
-		// Traemos gastos y transferencias
 		const allExpenses = await db.expenses.toArray();
 		const allTransfers = await db.transfers.toArray();
-
-		// Presupuestos de ESTE mes
 		const budgets = await db.monthlyBudgets
 			.where('[year+month]')
 			.equals([currentYear, currentMonth])
@@ -58,7 +43,6 @@
 		return cats.map((cat) => {
 			const budgetObj = budgets.find((b) => b.categoryId === cat.id);
 			const budgetAmount = budgetObj ? budgetObj.amountUsd : 0;
-
 			let displayAmount = 0;
 			let progress = 0;
 			let label = '';
@@ -66,48 +50,35 @@
 			let remainingBudget = 0;
 
 			if (cat.isSavings) {
-				// --- MODO AHORRO (STOCK) ---
 				const totalIn = allTransfers
 					.filter((t) => t.toCategoryId === cat.id)
 					.reduce((sum, t) => sum + t.amountUsd, 0);
-
 				const totalOut = allTransfers
 					.filter((t) => t.fromCategoryId === cat.id)
 					.reduce((sum, t) => sum + t.amountUsd, 0);
-
 				const totalSpent = allExpenses
 					.filter((e) => e.categoryId === cat.id)
 					.reduce((sum, e) => sum + e.realUsdCost, 0);
-
-				const availableBalance = totalIn - totalOut - totalSpent;
-				displayAmount = availableBalance;
+				displayAmount = totalIn - totalOut - totalSpent;
 				label = 'Disponible';
-
-				// Gastos de este mes
 				spentThisMonth = allExpenses
 					.filter((e) => e.categoryId === cat.id && e.date >= startOfMonth && e.date <= endOfMonth)
 					.reduce((sum, e) => sum + e.realUsdCost, 0);
-
-				// Progreso de Aporte
 				const contributionsThisMonth = allTransfers
 					.filter(
 						(t) => t.toCategoryId === cat.id && t.date >= startOfMonth && t.date <= endOfMonth
 					)
 					.reduce((sum, t) => sum + t.amountUsd, 0);
-
 				progress = budgetAmount > 0 ? (contributionsThisMonth / budgetAmount) * 100 : 0;
 			} else {
-				// --- MODO GASTO (FLUJO) ---
 				spentThisMonth = allExpenses
 					.filter((e) => e.categoryId === cat.id && e.date >= startOfMonth && e.date <= endOfMonth)
 					.reduce((sum, e) => sum + e.realUsdCost, 0);
-
 				displayAmount = spentThisMonth;
 				remainingBudget = budgetAmount - spentThisMonth;
 				label = 'Gastado';
 				progress = budgetAmount > 0 ? (spentThisMonth / budgetAmount) * 100 : 0;
 			}
-
 			return {
 				...cat,
 				displayAmount,
@@ -157,27 +128,31 @@
 					<div
 						class="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3 py-1 backdrop-blur-md"
 					>
-						<span class="text-xs font-medium text-blue-50">
-							≈ $ {$balanceData?.usd.toFixed(2) ?? '0.00'} Valor Real
-						</span>
+						<span class="text-xs font-medium text-blue-50"
+							>≈ $ {$balanceData?.usd.toFixed(2) ?? '0.00'} Valor Real</span
+						>
 					</div>
 				</div>
 			</div>
 		</div>
 
 		<div class="grid grid-cols-2 gap-3">
-			<div
-				class="flex flex-col justify-between rounded-2xl border border-zinc-100 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+			<button
+				class="flex flex-col justify-between rounded-2xl border border-zinc-100 bg-white p-5 text-left shadow-sm transition-all hover:bg-zinc-50 active:scale-[0.98] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+				onclick={() => (isToolsOpen = true)}
 			>
 				<div>
-					<div class="mb-2 flex items-center gap-2">
-						<span class="text-lg">🏦</span>
-						<p class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Tasa BCV</p>
+					<div class="mb-2 flex items-center justify-between gap-2">
+						<div class="flex items-center gap-2">
+							<span class="text-lg">🏦</span>
+							<p class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Tasa BCV</p>
+						</div>
 					</div>
 					<span class="text-2xl font-bold text-zinc-900 dark:text-white">{data.tasa}</span>
 				</div>
 				<p class="mt-2 text-right text-[10px] font-medium text-zinc-400">{data.fecha}</p>
-			</div>
+			</button>
+
 			<button
 				class="group relative flex flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl border border-zinc-100 bg-white p-4 shadow-sm transition-all hover:bg-zinc-50 active:scale-[0.98] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
 				onclick={() => (isPlannerOpen = true)}
@@ -195,7 +170,6 @@
 			<h3 class="mb-3 px-1 text-xs font-bold tracking-widest text-zinc-400 uppercase">
 				Mis Sobres
 			</h3>
-
 			{#if $categoriesWithData}
 				<div class="pb-safe grid grid-cols-2 gap-3">
 					{#each $categoriesWithData as cat (cat.id)}
@@ -206,14 +180,12 @@
 								class="absolute top-0 bottom-0 left-0 w-1"
 								style="background-color: {cat.isSavings ? '#10b981' : cat.color}"
 							></div>
-
 							<div class="flex items-start justify-between pl-2">
 								<div
 									class="flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl shadow-sm dark:bg-zinc-800"
 								>
 									{getCategoryIcon(cat.icon)}
 								</div>
-
 								<div class="text-right">
 									<span
 										class="block text-xs font-bold {cat.isSavings
@@ -228,41 +200,35 @@
 									<span class="text-[9px] tracking-wider text-zinc-400 uppercase">{cat.label}</span>
 								</div>
 							</div>
-
 							<div class="mt-3 pl-2">
 								<div class="mb-1 flex flex-col justify-end">
 									<h3 class="text-sm leading-tight font-medium text-zinc-900 dark:text-white">
 										{cat.name}
 									</h3>
-
 									{#if cat.isSavings}
 										<div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-											{#if cat.budget > 0}
-												<span class="text-[9px] font-medium text-zinc-400">Meta: ${cat.budget}</span
-												>
-											{/if}
-											{#if cat.spentThisMonth > 0}
-												<span class="text-[9px] font-bold text-red-500"
+											{#if cat.budget > 0}<span class="text-[9px] font-medium text-zinc-400"
+													>Meta: ${cat.budget}</span
+												>{/if}
+											{#if cat.spentThisMonth > 0}<span class="text-[9px] font-bold text-red-500"
 													>Gastado: -${cat.spentThisMonth.toFixed(0)}</span
-												>
-											{/if}
+												>{/if}
 										</div>
 									{:else if cat.budget > 0}
 										<div class="mt-0.5">
 											{#if cat.remainingBudget >= 0}
-												<span class="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
-													Restan: ${cat.remainingBudget.toFixed(0)}
-												</span>
+												<span class="text-[9px] font-bold text-emerald-600 dark:text-emerald-400"
+													>Restan: ${cat.remainingBudget.toFixed(0)}</span
+												>
 											{:else}
-												<span class="text-[9px] font-bold text-red-500">
-													Excedido: ${Math.abs(cat.remainingBudget).toFixed(0)}
-												</span>
+												<span class="text-[9px] font-bold text-red-500"
+													>Excedido: ${Math.abs(cat.remainingBudget).toFixed(0)}</span
+												>
 											{/if}
 											<span class="ml-1 text-[8px] text-zinc-400">(de ${cat.budget})</span>
 										</div>
 									{/if}
 								</div>
-
 								{#if cat.budget > 0}
 									<div
 										class="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700"
@@ -276,13 +242,16 @@
 													: cat.color}"
 										></div>
 									</div>
-
-									{#if !cat.isSavings && cat.progress > 100}
-										<p class="mt-1 text-[9px] font-bold text-red-500">¡Excedido!</p>
-									{/if}
-									{#if cat.isSavings && cat.progress >= 100}
-										<p class="mt-1 text-[9px] font-bold text-emerald-600">¡Meta cumplida! 🎉</p>
-									{/if}
+									{#if !cat.isSavings && cat.progress > 100}<p
+											class="mt-1 text-[9px] font-bold text-red-500"
+										>
+											¡Excedido!
+										</p>{/if}
+									{#if cat.isSavings && cat.progress >= 100}<p
+											class="mt-1 text-[9px] font-bold text-emerald-600"
+										>
+											¡Meta cumplida! 🎉
+										</p>{/if}
 								{:else}
 									<p class="text-[10px] text-zinc-500">
 										{cat.isSavings ? 'Ahorro libre' : 'Sin límite'}
@@ -300,4 +269,10 @@
 
 	<BottomNav />
 	<MonthlyPlanner bind:isOpen={isPlannerOpen} />
+
+	<ToolsSheet
+		bind:isOpen={isToolsOpen}
+		currentRate={data.tasa}
+		balanceVes={$balanceData?.ves ?? 0}
+	/>
 </Page>

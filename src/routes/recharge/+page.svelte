@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { v4 as uuidv4 } from 'uuid';
 	import { untrack } from 'svelte';
-	import { Page, Block } from 'konsta/svelte'; // Quitamos List y ListItem
+	import { Page, Block } from 'konsta/svelte';
 	import { db } from '$lib/database/index';
 	import { toast } from '$lib/stores/toast';
 	import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
@@ -11,6 +11,8 @@
 
 	// Estado
 	let mode = $state('ves'); // 'ves' | 'usd'
+	let vesSource = $state('exchange'); // 'exchange' | 'income' 👈 1. NUEVO ESTADO
+
 	let loading = $state(false);
 	let amount = $state('');
 	let description = $state('');
@@ -35,7 +37,12 @@
 			const totalSpentDirectlyCorrected = expenses.reduce((sum, exp) => sum + exp.realUsdCost, 0);
 
 			const batches = await db.batches.toArray();
-			const totalSpentOnBatches = batches.reduce((sum, batch) => sum + batch.initialUsd, 0);
+
+			// 👈 2. MODIFICADO: Ignoramos los lotes que son regalos (isGift)
+			const totalSpentOnBatches = batches.reduce((sum, batch) => {
+				if (batch.isGift) return sum;
+				return sum + batch.initialUsd;
+			}, 0);
 
 			availableUsd = totalIncome - totalSpentDirectlyCorrected - totalSpentOnBatches;
 		} catch (e) {
@@ -72,17 +79,19 @@
 					return;
 				}
 
-				// Validación de fondos
 				const costInUsd = parseFloat(calculatedUsdCost);
-				await calculateAvailableUsd();
 
-				if (costInUsd > availableUsd + 0.01) {
-					toast.show(
-						`Fondos insuficientes. Tienes $${availableUsd.toFixed(2)} y necesitas $${costInUsd}`,
-						'error'
-					);
-					loading = false;
-					return;
+				// 👈 3. MODIFICADO: Solo validamos fondos si es CAMBIO (exchange)
+				if (vesSource === 'exchange') {
+					await calculateAvailableUsd();
+					if (costInUsd > availableUsd + 0.01) {
+						toast.show(
+							`Fondos insuficientes. Tienes $${availableUsd.toFixed(2)} y necesitas $${costInUsd}`,
+							'error'
+						);
+						loading = false;
+						return;
+					}
 				}
 
 				await db.batches.add({
@@ -92,7 +101,7 @@
 					initialVes: valAmount,
 					currentVes: valAmount,
 					initialUsd: costInUsd,
-					isGift: false
+					isGift: vesSource === 'income' // 👈 AQUÍ SE GUARDA LA MAGIA
 				});
 			} else {
 				await db.incomes.add({
@@ -103,7 +112,7 @@
 				});
 			}
 
-			toast.show('¡Dinero registrado correctamente!', 'success');
+			toast.show('¡Registrado correctamente!', 'success');
 			setTimeout(async () => {
 				await goto('/');
 			}, 700);
@@ -134,13 +143,11 @@
 				></path></svg
 			>
 		</button>
-
-		<h1 class="text-base font-bold text-zinc-900 dark:text-white">Recargar Saldo</h1>
-
+		<h1 class="text-base font-bold text-zinc-900 dark:text-white">Operaciones</h1>
 		<div class="w-8"></div>
 	</header>
 
-	<div class="space-y-6 px-4 pt-20 pb-10">
+	<div class="space-y-3 px-4 pt-20 pb-10">
 		<SegmentedControl
 			bind:selected={mode}
 			options={[
@@ -151,17 +158,45 @@
 
 		{#if mode === 'ves'}
 			<div class="space-y-4">
+				<div
+					class="flex rounded-xl border border-zinc-100 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900"
+				>
+					<button
+						class="flex-1 rounded-lg py-2 text-xs font-bold transition-all {vesSource === 'exchange'
+							? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+							: 'text-zinc-400 hover:text-zinc-600'}"
+						onclick={() => (vesSource = 'exchange')}
+					>
+						Cambio Divisa
+					</button>
+					<button
+						class="flex-1 rounded-lg py-2 text-xs font-bold transition-all {vesSource === 'income'
+							? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+							: 'text-zinc-400 hover:text-zinc-600'}"
+						onclick={() => (vesSource = 'income')}
+					>
+						Ingreso Directo
+					</button>
+				</div>
+
 				<div class="pb-2 text-center">
 					<span class="text-4xl">🇻🇪</span>
-					<p class="mt-2 text-xs text-zinc-400">Crear lote con saldo USD existente</p>
-					<div
-						class="mt-2 inline-flex items-center rounded-full bg-zinc-100 px-3 py-1 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800"
-					>
-						Disponible:
-						<span class="ml-1 {availableUsd < 0 ? 'text-red-500' : 'text-emerald-600'}">
-							${availableUsd.toFixed(2)}
-						</span>
-					</div>
+					<p class="mt-2 text-xs text-zinc-400">
+						{vesSource === 'exchange'
+							? 'Usar mis dólares para comprar Bs'
+							: 'Recibí Bs externos (Venta, Pago, etc)'}
+					</p>
+
+					{#if vesSource === 'exchange'}
+						<div
+							class="mt-2 inline-flex items-center rounded-full bg-zinc-100 px-3 py-1 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800"
+						>
+							Disponible:
+							<span class="ml-1 {availableUsd < 0 ? 'text-red-500' : 'text-emerald-600'}">
+								${availableUsd.toFixed(2)}
+							</span>
+						</div>
+					{/if}
 				</div>
 
 				<div
@@ -170,8 +205,9 @@
 					<label
 						for="ves-amount"
 						class="mb-2 block text-xs font-bold tracking-widest text-zinc-400 uppercase"
-						>Cantidad a Comprar</label
 					>
+						{vesSource === 'exchange' ? 'Cantidad a Comprar' : 'Monto Recibido'}
+					</label>
 					<div class="flex items-center justify-center gap-2">
 						<span class="text-3xl font-medium text-blue-300">Bs</span>
 						<input
@@ -187,9 +223,9 @@
 				<div
 					class="flex items-center justify-between rounded-2xl border border-zinc-100 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
 				>
-					<label for="ves-rate" class="text-sm font-bold text-zinc-700 dark:text-zinc-300"
-						>Tasa de Cambio</label
-					>
+					<label for="ves-rate" class="text-sm font-bold text-zinc-700 dark:text-zinc-300">
+						{vesSource === 'exchange' ? 'Tasa de Cambio' : 'Tasa de Referencia'}
+					</label>
 					<div class="flex items-center gap-2">
 						<span class="text-sm text-zinc-400">Bs/$</span>
 						<input
@@ -203,7 +239,7 @@
 				</div>
 
 				<div class="flex justify-between px-4 text-xs font-medium text-zinc-400">
-					<span>Costo real a descontar:</span>
+					<span>{vesSource === 'exchange' ? 'Costo a descontar:' : 'Valor estimado:'}</span>
 					<span class="font-bold text-zinc-900 dark:text-white">$ {calculatedUsdCost}</span>
 				</div>
 			</div>
@@ -264,8 +300,10 @@
 			>
 				{#if loading}
 					<span class="flex items-center justify-center gap-2">Guardando...</span>
+				{:else if mode === 'ves'}
+					{vesSource === 'exchange' ? 'Comprar Bs (Gastar $)' : 'Registrar Ingreso Bs'}
 				{:else}
-					{mode === 'ves' ? 'Crear Lote de Bs' : 'Registrar Ingreso ($)'}
+					Registrar Ingreso ($)
 				{/if}
 			</button>
 		</div>
