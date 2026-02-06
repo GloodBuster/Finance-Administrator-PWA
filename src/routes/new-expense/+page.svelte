@@ -247,7 +247,7 @@
 						id="date-input"
 						type="date"
 						bind:value={date}
-						class="w-full rounded-2xl border border-zinc-100 bg-white px-4 py-4 font-medium text-zinc-900 shadow-sm transition-all outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:scheme-dark"
+						class="w-full min-w-0 rounded-2xl border border-zinc-100 bg-white px-4 py-4 font-medium text-zinc-900 shadow-sm transition-all outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:scheme-dark"
 					/>
 				</div>
 				<div class="flex flex-col gap-2">

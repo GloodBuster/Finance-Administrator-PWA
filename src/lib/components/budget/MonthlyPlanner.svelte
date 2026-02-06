@@ -22,6 +22,21 @@
 		}
 	});
 
+	$effect(() => {
+		if (isOpen) {
+			// Bloquear scroll
+			document.body.style.overflow = 'hidden';
+		} else {
+			// Restaurar scroll
+			document.body.style.overflow = '';
+		}
+
+		// Cleanup por si el componente se desmonta con el modal abierto
+		return () => {
+			document.body.style.overflow = '';
+		};
+	});
+
 	async function loadBudgets() {
 		const cats = await db.categories.filter((c) => !c.isArchived).toArray();
 

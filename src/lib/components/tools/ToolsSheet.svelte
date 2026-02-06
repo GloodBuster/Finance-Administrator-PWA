@@ -25,6 +25,21 @@
 		}
 	});
 
+	$effect(() => {
+		if (isOpen) {
+			// Bloquear scroll
+			document.body.style.overflow = 'hidden';
+		} else {
+			// Restaurar scroll
+			document.body.style.overflow = '';
+		}
+
+		// Cleanup por si el componente se desmonta con el modal abierto
+		return () => {
+			document.body.style.overflow = '';
+		};
+	});
+
 	// Cálculo: Bolívares / Tasa = Dólares
 	let convResult = $derived.by(() => {
 		const ves = parseFloat(convVes) || 0;

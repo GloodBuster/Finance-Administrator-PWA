@@ -2,10 +2,8 @@
 	import { onMount } from 'svelte';
 	import './layout.css';
 	import { seedDatabase } from '$lib/database/seed';
-	import { App, Page } from 'konsta/svelte';
+	import { App } from 'konsta/svelte';
 	import Toast from '$lib/components/ui/Toast.svelte';
-
-	// Importamos nuestra nueva barra
 	import TabBar from '$lib/components/layout/TabBar.svelte';
 
 	let { children } = $props();
@@ -15,12 +13,11 @@
 	});
 </script>
 
-<App theme="ios" safeAreas>
-	<Page class="relative h-screen w-screen bg-gray-950 px-4">
-		<div class="h-full overflow-y-auto pb-14">
-			{@render children()}
-		</div>
-	</Page>
-	<TabBar />
+<App theme="ios" safeAreas class="h-full w-full bg-gray-950">
+	{@render children()}
+
+	<div class="fixed bottom-0 left-0 z-50 w-full">
+		<TabBar />
+	</div>
 	<Toast />
 </App>
