@@ -1,1 +1,11 @@
 @import 'tailwindcss';
+
+html,
+body {
+	height: 100%;
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	overflow: hidden; /* Esto evita el scroll doble general */
+	background-color: #000; /* O el color de fondo base que prefieras */
+}

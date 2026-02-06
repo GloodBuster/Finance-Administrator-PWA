@@ -13,11 +13,14 @@
 	});
 </script>
 
-<App theme="ios" safeAreas class="h-full w-full bg-gray-950">
+<App theme="ios" safeAreas class="relative h-full w-full bg-gray-950">
 	{@render children()}
 
-	<div class="fixed bottom-0 left-0 z-50 w-full">
-		<TabBar />
+	<div class="pointer-events-none fixed bottom-0 left-0 z-50 w-full">
+		<div class="pointer-events-auto">
+			<TabBar />
+		</div>
 	</div>
+
 	<Toast />
 </App>
