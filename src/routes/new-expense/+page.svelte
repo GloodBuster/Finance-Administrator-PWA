@@ -7,7 +7,7 @@
 	import { toast } from '$lib/stores/toast';
 	import { getCategoryIcon } from '$lib/utils';
 	import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
-	import CategoryCreator from '$lib/components/categories/CategoryCreator.svelte'; // 👈 Importamos
+	import CategoryCreator from '$lib/components/categories/CategoryCreator.svelte';
 
 	// Estado Formulario
 	let amount = $state('');
@@ -17,16 +17,18 @@
 	let note = $state('');
 	let loading = $state(false);
 
-	// Estado Categorías (Solo lo necesario para la UI principal)
+	// Estado Categorías
 	let isEditingCategories = $state(false);
-	let isCreatingCategory = $state(false); // 👈 Controlamos el modal aquí
+	let isCreatingCategory = $state(false);
 
 	// Consultas
 	let categories = liveQuery(() => db.categories.filter((cat) => !cat.isArchived).toArray());
 
 	async function handleSave() {
-		// ... (Tu lógica de guardar Gasto se mantiene IGUAL) ...
-		if (!amount || parseFloat(amount) <= 0) {
+		// 1. LIMPIEZA DE MONTO (Coma -> Punto)
+		const cleanAmount = amount.replace(',', '.');
+
+		if (!cleanAmount || parseFloat(cleanAmount) <= 0) {
 			toast.show('Ingresa un monto válido', 'error');
 			return;
 		}
@@ -34,9 +36,11 @@
 			toast.show('Selecciona una categoría', 'error');
 			return;
 		}
+
 		loading = true;
+
 		try {
-			const valAmount = parseFloat(amount);
+			const valAmount = parseFloat(cleanAmount); // Usamos el monto limpio
 			const expenseDate = new Date(date);
 			let calculatedUsdCost = 0;
 
@@ -46,15 +50,21 @@
 				let remainingAmountToCover = valAmount;
 				calculatedUsdCost = 0;
 				const batches = await db.batches.where('currentVes').above(0).sortBy('createdAt');
+
 				for (const batch of batches) {
 					if (remainingAmountToCover <= 0) break;
 					const takeFromBatch = Math.min(batch.currentVes, remainingAmountToCover);
-					const costOfPortion = takeFromBatch / batch.exchangeRate;
+
+					// Si el lote fue un regalo (isGift), el costo es 0. Si no, calculamos.
+					const costOfPortion = batch.isGift ? 0 : takeFromBatch / batch.exchangeRate;
+
 					calculatedUsdCost += costOfPortion;
 					batch.currentVes -= takeFromBatch;
 					remainingAmountToCover -= takeFromBatch;
+
 					await db.batches.update(batch.id, { currentVes: batch.currentVes });
 				}
+
 				if (remainingAmountToCover > 0) {
 					const fallbackRate = batches.length > 0 ? batches[batches.length - 1].exchangeRate : 60;
 					calculatedUsdCost += remainingAmountToCover / fallbackRate;
@@ -122,10 +132,22 @@
 				<span class="text-xs font-bold tracking-widest text-zinc-400 uppercase">Monto</span>
 				<div class="mt-3 mb-5">
 					<input
-						type="number"
+						type="text"
 						inputmode="decimal"
 						placeholder="0.00"
-						bind:value={amount}
+						value={amount}
+						oninput={(e) => {
+							// Reemplazamos la coma por punto en tiempo real
+							let val = e.currentTarget.value.replace(',', '.');
+
+							// Validación: Solo números y un punto
+							if (/^\d*\.?\d*$/.test(val)) {
+								amount = val;
+							} else {
+								// Si escribe algo inválido, restauramos el valor anterior
+								e.currentTarget.value = amount;
+							}
+						}}
 						class="w-full rounded-2xl bg-zinc-100 py-6 text-center text-5xl font-bold text-zinc-900 placeholder-zinc-300 transition-all outline-none focus:ring-2 focus:ring-blue-500/20 dark:bg-zinc-800 dark:text-white dark:placeholder-zinc-600"
 					/>
 				</div>
